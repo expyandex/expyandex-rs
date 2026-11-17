@@ -44,10 +44,9 @@ async fn run(args: Args) -> Result<(), String> {
     {
         let log = log.clone();
         tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
-                let _ = stop_tx.send(true);
-                log.line_wait("stopping").await;
-            }
+            stop_signal().await;
+            let _ = stop_tx.send(true);
+            log.line_wait("stopping").await;
         });
     }
 
@@ -112,6 +111,22 @@ async fn run(args: Args) -> Result<(), String> {
     log.shutdown().await;
     let _ = worker.await;
     Ok(())
+}
+
+// ctrl+c, plus SIGTERM: ECS/Fargate sends it on task stop, and as PID 1 we'd ignore it otherwise.
+async fn stop_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        if let Ok(mut term) = signal(SignalKind::terminate()) {
+            tokio::select! {
+                _ = term.recv() => {}
+                _ = tokio::signal::ctrl_c() => {}
+            }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 fn load_samples(unpacked: &Unpacked) -> Result<(reqwest::Client, Vec<u8>, Vec<u8>, usize), String> {
